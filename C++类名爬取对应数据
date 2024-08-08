@@ -1,0 +1,75 @@
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <curl/curl.h>
+#include <gumbo.h>
+
+std::string textBuffer;  // 存储HTML文本
+std::ofstream txtFile;   // 保存结果的文件
+
+size_t write_data(void* ptr, size_t size, size_t nmemb, void* userdata) {
+    size_t realSize = size * nmemb;
+    textBuffer.append((char*)ptr, realSize);
+    return realSize;
+}
+
+void extract_message(GumboNode* node) {
+    if (node && node->type == GUMBO_NODE_ELEMENT) //前提要素元素node
+    { 
+        GumboAttribute* class_attr = gumbo_get_attribute(&node->v.element.attributes, "class");
+        if (class_attr && std::string(class_attr->value) == "hugo3-util-ellipsis line-2 hugo3-fw-heavy hugo3-fz-medium") //找对应网页中的class名称
+        { 
+            if (node->v.element.children.length > 0) {
+                GumboNode* text_node = static_cast<GumboNode*>(node->v.element.children.data[0]);
+                if (text_node->type == GUMBO_NODE_TEXT) {
+                    txtFile << "Price: " << text_node->v.text.text << std::endl;
+                }
+            }
+        }
+
+        GumboVector* children = &node->v.element.children;
+        for (unsigned int i = 0; i < children->length; ++i) {
+            extract_message(static_cast<GumboNode*>(children->data[i]));
+        }
+    }
+
+}
+
+void setup_curl_and_download(const std::string& url) {
+    CURL* curl = curl_easy_init();
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, nullptr);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0");
+        CURLcode result = curl_easy_perform(curl);
+        if (result != CURLE_OK) {
+            std::cerr << "CURL error: " << curl_easy_strerror(result) << std::endl;
+        }
+        curl_easy_cleanup(curl);
+    }
+}
+
+int main() {
+    txtFile.open("prices.txt");
+    if (!txtFile.is_open()) {
+        std::cerr << "Failed to open file.\n";
+        return 1;
+    }
+
+    setup_curl_and_download("https://sale.alibaba.com/p/rank/detail.html?spm=a27aq.rank_list.5162911150.4.56f74b26qD4nvc&wx_navbar_transparent=true&path=/p/rank/detail.html&ncms_spm=a27aq.rank_detail&cardType=101002745&cardId=10001342680&topOfferIds=1838501335&templateBusinessCode=&useNewInterface=false");
+
+    if (!textBuffer.empty()) {
+        GumboOutput* output = gumbo_parse(textBuffer.c_str());
+        extract_message(output->root);
+        gumbo_destroy_output(&kGumboDefaultOptions, output);
+    }
+    else {
+        std::cerr << "No data received from URL.\n";
+    }
+
+    txtFile.close();
+    return 0;
+}
