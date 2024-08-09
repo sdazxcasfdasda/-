@@ -1,1 +1,124 @@
 
+#include "song.h"
+#include <iostream>
+#include <fstream>
+#include <string>
+#include <vector>
+#include <curl/curl.h>
+#include <gumbo.h>
+
+std::string textBuffer;  // 存储HTML文本
+std::ofstream txtFile;   // 保存结果的txt文件
+
+size_t write_data(void* ptr, size_t size, size_t nmemb, void* userdata) // 写回函数
+{
+    size_t realSize = size * nmemb;
+    textBuffer.append((char*)ptr, realSize);
+    return realSize;
+}
+
+void extract_message(GumboNode* node, std::ofstream& txtFile) {
+    static std::string currentSongName, currentImageUrl, currentArtists, currentTime;
+
+    if (node && node->type == GUMBO_NODE_ELEMENT) {
+        GumboAttribute* class_attr = gumbo_get_attribute(&node->v.element.attributes, "class");
+
+        if (class_attr) {
+            if (std::string(class_attr->value) == "songlist__pic") {
+                // 直接从<img>标签获取歌名和图片URL
+                GumboAttribute* title_attr = gumbo_get_attribute(&node->v.element.attributes, "alt");
+                GumboAttribute* src_attr = gumbo_get_attribute(&node->v.element.attributes, "src");
+
+                if (title_attr) {
+                    currentSongName = title_attr->value;
+                }
+                if (src_attr) {
+                    currentImageUrl = src_attr->value;
+                    if (currentImageUrl.find("//") == 0) {
+                        currentImageUrl = "https:" + currentImageUrl;
+                    }
+                }
+            }
+            else if (std::string(class_attr->value) == "playlist__author") {
+                // 累积艺术家名字
+                GumboAttribute* artist_attr = gumbo_get_attribute(&node->v.element.attributes, "title");
+                if (artist_attr) {
+                    if (!currentArtists.empty()) {
+                        currentArtists += "/";
+                    }
+                    currentArtists += artist_attr->value;
+                }
+            }
+            else if (std::string(class_attr->value) == "songlist__time") {
+                if (node->v.element.children.length > 0) {
+                    GumboNode* text_node = static_cast<GumboNode*>(node->v.element.children.data[0]);
+                    if (text_node->type == GUMBO_NODE_TEXT) {
+                        currentTime = text_node->v.text.text;  // 直接获取时间文本
+
+                    }
+                }
+
+                txtFile << "Song Name: " << currentSongName
+                    << ", Artists: " << currentArtists
+                    << ", Time: " << currentTime
+                    << ", Image URL: " << currentImageUrl << std::endl;
+
+                // 清空暂存器以准备下一首歌的信息
+                currentSongName.clear();
+                currentImageUrl.clear();
+                currentArtists.clear();
+                currentTime.clear();
+            }
+
+
+        }
+
+        // 递归处理所有子节点
+        GumboVector* children = &node->v.element.children;
+        for (unsigned int i = 0; i < children->length; ++i) {
+            extract_message(static_cast<GumboNode*>(children->data[i]), txtFile);
+        }
+    }
+}
+
+
+
+
+void setup_curl_and_download(const std::string& url) {
+    CURL* curl = curl_easy_init();
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, nullptr);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0");
+        CURLcode result = curl_easy_perform(curl);
+        if (result != CURLE_OK) {
+            std::cerr << "CURL error: " << curl_easy_strerror(result) << std::endl;
+        }
+        curl_easy_cleanup(curl);
+    }
+}
+
+int main() {
+    txtFile.open("songs.txt");
+    if (!txtFile.is_open()) {
+        std::cerr << "Failed to open file.\n";
+        return 1;
+    }
+
+    setup_curl_and_download("https://y.qq.com/n/ryqq/toplist/26");
+
+    if (!textBuffer.empty()) {
+        GumboOutput* output = gumbo_parse(textBuffer.c_str());
+        extract_message(output->root, txtFile);
+        gumbo_destroy_output(&kGumboDefaultOptions, output);
+    }
+    else {
+        std::cerr << "No data received from URL.\n";
+    }
+
+    txtFile.close();
+    return 0;
+}
