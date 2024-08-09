@@ -1,0 +1,42 @@
+import re
+import requests
+import csv
+
+def get_html(url):
+    """ 获取页面的 HTML 内容 """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.106 Safari/537.36'
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return response.text
+    return None
+
+def parse_page(html):
+    """ 解析页面并保存歌曲信息 """
+    pattern = re.compile(
+        '<li>.*?songlist__item.*?songlist__number.*?">(.*?)</div>.*?<img.*?src="(.*?)".*?alt="(.*?)".*?<a.*?playlist__author.*?title="(.*?)".*?<div.*?songlist__time">(.*?)</div>.*?</li>', re.S
+    )
+    items = re.findall(pattern, html)
+    songs = [{
+        '排名': item[0].strip(),
+        '图片链接': 'https:' + item[1].strip(),
+        '歌名': item[2].strip(),
+        '歌手': item[3].strip(),
+        '播放时间': item[4].strip()
+    } for item in items]
+    save_songs(songs)
+
+def save_songs(songs):
+    """ 将歌曲信息保存到 CSV 文件 """
+    with open('Songs.csv', 'a', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['排名', '图片链接', '歌名', '歌手', '播放时间'])
+        for song in songs:
+            writer.writerow([song['排名'], song['图片链接'], song['歌名'], song['歌手'], song['播放时间']])
+
+if __name__ == "__main__":
+    url = 'https://y.qq.com/n/ryqq/toplist/26'
+    html = get_html(url)
+    if html:
+        parse_page(html)
